@@ -13,6 +13,7 @@ const DELETE_BIS: u8 = ctrl_key(b'H');
 const REFRESH_SCREEN: u8 = ctrl_key(b'L');
 const SAVE: u8 = ctrl_key(b'S');
 const FIND: u8 = ctrl_key(b'F');
+const CUT: u8 = ctrl_key(b'K');
 const GOTO: u8 = ctrl_key(b'G');
 const DUPLICATE: u8 = ctrl_key(b'D');
 const BACKSPACE: u8 = 127;
@@ -103,6 +104,8 @@ pub struct Editor {
     n_bytes: u64,
     /// The original terminal mode. It will be restored when the `Editor` instance is dropped.
     orig_term_mode: Option<sys::TermMode>,
+    /// Current cut row.
+    cut_row: Row,
 }
 
 /// Describes a status message, shown at the bottom at the screen.
@@ -385,6 +388,46 @@ impl Editor {
         }
     }
 
+    fn cut_current_row(&mut self) {
+        if self.cursor.y == self.rows.len() {
+            return;
+        }
+
+        if self.cursor.y != self.rows.len() - 1 {
+            let row = self.rows.remove(self.cursor.y);
+            let next_row = &mut self.rows[self.cursor.y];
+            let n_bytes_to_remove = row.chars.len() as u64;
+            self.cut_row = row;
+            self.cursor.x = next_row.chars.len();
+            self.update_row(self.cursor.y, false);
+            // The number of rows has changed. The left padding may need to be updated.
+            self.update_screen_cols();
+            self.dirty = if self.is_empty() {self.file_name.is_some()} else {true};
+            self.n_bytes -= n_bytes_to_remove as u64;
+        } else {
+            let row = &mut self.rows[self.cursor.y];
+            if row.chars.len() != 0 {
+                self.cut_row = row.clone();
+                let n_bytes_to_remove = row.chars.len() as u64;
+                row.chars.splice(..row.chars.len(), iter::empty());
+                self.cursor.x = 0;
+                self.update_row(self.cursor.y, true);
+                self.n_bytes -= n_bytes_to_remove;
+            } else if row.chars.len() == 0 && self.rows.len() > 1 {
+                let row = self.rows.remove(self.cursor.y);
+                let previous_row = &mut self.rows[self.cursor.y - 1];
+                self.cursor.x = previous_row.chars.len();
+                previous_row.chars.extend(&row.chars);
+                self.update_row(self.cursor.y - 1, true);
+                self.update_row(self.cursor.y, false);
+                // The number of rows has changed. The left padding may need to be updated.
+                self.update_screen_cols();
+                self.dirty = true;
+                self.cursor.y -= 1;
+            }
+        }
+    }
+
     fn duplicate_current_row(&mut self) {
         if let Some(row) = self.current_row() {
             let new_row = Row::new(row.chars.clone());
@@ -610,6 +653,9 @@ impl Editor {
                     self.file_name = Some(file_name)
                 }
                 None => prompt_mode = Some(PromptMode::Save(String::new())),
+            },
+            Key::Char(CUT) => {
+                self.cut_current_row();
             },
             Key::Char(FIND) =>
                 prompt_mode = Some(PromptMode::Find(String::new(), self.cursor.clone(), None)),

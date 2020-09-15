@@ -27,7 +27,7 @@ impl Default for HLState {
 }
 
 /// Represents a row of characters and how it is rendered.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Row {
     /// The characters of the row.
     pub chars: Vec<u8>,
